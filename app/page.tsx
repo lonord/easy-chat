@@ -1,113 +1,212 @@
-import Image from "next/image";
+"use client";
+
+import { useEffect, useState, useRef } from "react";
+import { Button, Textarea } from '@headlessui/react'
+import { socket } from "./socket";
+import { useClient } from "./client";
+import orderBy from "lodash.orderby";
 
 export default function Home() {
+  const clientName = useClient();
+  const [isConnected, setIsConnected] = useState(false);
+
+  const [messages, setMessages] = useState<Message[]>([])
+  const [receivingMessage, setReceivingMessage] = useState(null);
+
+  const [toastText, setToastText] = useState("");
+  const [toastLevel, setToastLevel] = useState<ToastLevel>(null);
+
+  const [inputText, setInputText] = useState("");
+  const [sending, setSending] = useState(false);
+
+  const scrollDivRef = useRef<any>(null);
+
+  const onToastDismiss = () => {
+    setToastText("");
+    setToastLevel(null);
+  }
+
+  const toastOK = (text: string) => {
+    setToastText(text);
+    setToastLevel("OK");
+  }
+  const toastERR = (text: string) => {
+    setToastText(text);
+    setToastLevel("ERR");
+  }
+
+  const appendMessage = (msg: Message) => {
+    const mList = [...messages];
+    mList.push(msg);
+    setMessages(orderBy(mList, ["createAt"], ["asc"]));
+  }
+
+  const scrollToBottom = () => {
+    if (scrollDivRef.current) {
+      scrollDivRef.current.scrollTop = scrollDivRef.current.scrollHeight;
+    }
+  };
+
+  const onCopy = (text: string) => {
+    navigator.clipboard.writeText(text).then(() => toastOK("Copied")).catch((e) => toastERR(e));
+  }
+
+  const sendMsg = (content: string) => {
+    setSending(true);
+    socket.emit("msg_push", { content }, (msg: Message, err: string) => {
+      setSending(false);
+      if (err) {
+        toastERR(err);
+      } else {
+        setInputText("");
+        appendMessage(msg);
+      }
+    })
+  };
+
+  useEffect(() => {
+    if (receivingMessage) {
+      appendMessage(receivingMessage);
+      setReceivingMessage(null);
+    }
+  }, [receivingMessage])
+
+  useEffect(() => {
+    if (socket.connected) {
+      onConnect();
+    }
+
+    function onConnect() {
+      if (!clientName) {
+        return;
+      }
+
+      setIsConnected(true);
+
+      socket.emit("info", { name: clientName }, () => {
+        socket.emit("msg_sync", {}, setMessages)
+      })
+    }
+
+    function onDisconnect() {
+      setIsConnected(false);
+    }
+
+    socket.on("msg_update", setReceivingMessage);
+    socket.on("connect", onConnect);
+    socket.on("disconnect", onDisconnect);
+
+    return () => {
+      socket.off("msg_update", setReceivingMessage);
+      socket.off("connect", onConnect);
+      socket.off("disconnect", onDisconnect);
+    };
+  }, [clientName]);
+
+  useEffect(scrollToBottom, [messages.length])
+
   return (
-    <main className="flex min-h-screen flex-col items-center justify-between p-24">
-      <div className="z-10 w-full max-w-5xl items-center justify-between font-mono text-sm lg:flex">
-        <p className="fixed left-0 top-0 flex w-full justify-center border-b border-gray-300 bg-gradient-to-b from-zinc-200 pb-6 pt-8 backdrop-blur-2xl dark:border-neutral-800 dark:bg-zinc-800/30 dark:from-inherit lg:static lg:w-auto  lg:rounded-xl lg:border lg:bg-gray-200 lg:p-4 lg:dark:bg-zinc-800/30">
-          Get started by editing&nbsp;
-          <code className="font-mono font-bold">app/page.tsx</code>
-        </p>
-        <div className="fixed bottom-0 left-0 flex h-48 w-full items-end justify-center bg-gradient-to-t from-white via-white dark:from-black dark:via-black lg:static lg:size-auto lg:bg-none">
-          <a
-            className="pointer-events-none flex place-items-center gap-2 p-8 lg:pointer-events-auto lg:p-0"
-            href="https://vercel.com?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            By{" "}
-            <Image
-              src="/vercel.svg"
-              alt="Vercel Logo"
-              className="dark:invert"
-              width={100}
-              height={24}
-              priority
-            />
-          </a>
+    <main className="flex flex-col items-center justify-between p-4 max-w-screen-lg mx-auto h-full">
+      <div ref={scrollDivRef} className="flex flex-col grow shrink w-full gap-y-4 my-4 overflow-y-auto">
+        {messages.map(msg => (
+          <Item key={msg.id} msg={msg} me={msg.client === clientName} onClick={() => onCopy(msg.content)} />
+        ))}
+      </div>
+      <div className="w-full p-2 flex flex-col items-center outline outline-gray-200 outline-1 rounded">
+        <Textarea className="w-full h-24 resize-none outline-none px-2" disabled={sending}
+          placeholder="Input content..." value={inputText} onChange={(event) => setInputText(event.target.value)} />
+        <div className="w-full pt-2 flex">
+          <div className="w-1/5">
+            <div className="text-gray-400">Text: {inputText.length}</div>
+          </div>
+          <div className="grow shrink flex justify-center items-center">
+            <Toast text={toastText} level={toastLevel} onDismiss={onToastDismiss} />
+          </div>
+          <div className="w-1/5 flex justify-end">
+            <Button disabled={!isConnected || sending}
+              className="rounded bg-sky-600 py-2 px-4 text-sm text-white data-[hover]:bg-sky-500 data-[active]:bg-sky-700 ml-4"
+              onClick={() => sendMsg(inputText)}>Send</Button>
+          </div>
         </div>
-      </div>
-
-      <div className="relative z-[-1] flex place-items-center before:absolute before:h-[300px] before:w-full before:-translate-x-1/2 before:rounded-full before:bg-gradient-radial before:from-white before:to-transparent before:blur-2xl before:content-[''] after:absolute after:-z-20 after:h-[180px] after:w-full after:translate-x-1/3 after:bg-gradient-conic after:from-sky-200 after:via-blue-200 after:blur-2xl after:content-[''] before:dark:bg-gradient-to-br before:dark:from-transparent before:dark:to-blue-700 before:dark:opacity-10 after:dark:from-sky-900 after:dark:via-[#0141ff] after:dark:opacity-40 sm:before:w-[480px] sm:after:w-[240px] before:lg:h-[360px]">
-        <Image
-          className="relative dark:drop-shadow-[0_0_0.3rem_#ffffff70] dark:invert"
-          src="/next.svg"
-          alt="Next.js Logo"
-          width={180}
-          height={37}
-          priority
-        />
-      </div>
-
-      <div className="mb-32 grid text-center lg:mb-0 lg:w-full lg:max-w-5xl lg:grid-cols-4 lg:text-left">
-        <a
-          href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className="mb-3 text-2xl font-semibold">
-            Docs{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className="m-0 max-w-[30ch] text-sm opacity-50">
-            Find in-depth information about Next.js features and API.
-          </p>
-        </a>
-
-        <a
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className="mb-3 text-2xl font-semibold">
-            Learn{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className="m-0 max-w-[30ch] text-sm opacity-50">
-            Learn about Next.js in an interactive course with&nbsp;quizzes!
-          </p>
-        </a>
-
-        <a
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className="mb-3 text-2xl font-semibold">
-            Templates{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className="m-0 max-w-[30ch] text-sm opacity-50">
-            Explore starter templates for Next.js.
-          </p>
-        </a>
-
-        <a
-          href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className="mb-3 text-2xl font-semibold">
-            Deploy{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className="m-0 max-w-[30ch] text-balance text-sm opacity-50">
-            Instantly deploy your Next.js site to a shareable URL with Vercel.
-          </p>
-        </a>
       </div>
     </main>
   );
 }
+
+function Item({ msg, me, onClick }: { msg: Message, me?: boolean, onClick: () => void }) {
+  return (
+    <div className={`w-full ${me ? 'pl-4 md:pl-8 lg:pl-16' : 'pr-4 md:pr-8 lg:pr-16'}`}>
+      <div className={`flex flex-col w-full px-3 py-2 cursor-pointer rounded ${me ? 'bg-sky-100' : 'bg-gray-100'}`} onClick={onClick}>
+        <div className="flex text-gray-400">
+          <span>{msg.client}</span>
+          <span className="grow shrink" />
+          <span>#{msg.id}</span>
+        </div>
+        <div>{msg.content}</div>
+      </div>
+    </div>
+  )
+}
+
+type Message = {
+  id: any
+  createAt: number
+  client: string
+  content: string
+}
+
+function Toast({ text, level, onDismiss }: { text: string, level: ToastLevel, onDismiss: () => void }) {
+  const [opacity, setOpacity] = useState(0)
+  const [innerText, setInnerText] = useState("")
+  const [innerLevel, setInnerLevel] = useState<ToastLevel>(null)
+
+  useEffect(() => {
+    let disappearTimerId: any = null;
+    let autoHideTimerId: any = null;
+    if (text) {
+      setOpacity(1)
+      setInnerText(text)
+      setInnerLevel(level)
+      autoHideTimerId = setTimeout(() => {
+        onDismiss();
+        autoHideTimerId = null
+      }, 2000);
+    } else {
+      setOpacity(0)
+      disappearTimerId = setTimeout(() => {
+        setInnerText("")
+        setInnerLevel(null)
+        disappearTimerId = null
+      }, 1000);
+    }
+    return () => {
+      if (disappearTimerId) {
+        clearTimeout(disappearTimerId)
+        setInnerText("")
+        setInnerLevel(null)
+      }
+    }
+  }, [text, level])
+
+  let fontStyle;
+  let textPrefix;
+  switch (innerLevel) {
+    case "OK":
+      fontStyle = "text-gray-600"
+      textPrefix = "✓ "
+      break;
+    case "ERR":
+      fontStyle = "text-red-600"
+      textPrefix = "✕ "
+      break;
+    default:
+      fontStyle = ""
+      textPrefix = ""
+      break;
+  }
+  return (
+    <div style={{ opacity: opacity }} className={`text-sm transition-opacity ${fontStyle}`}> {innerText ? textPrefix + innerText : ''}</div >
+  )
+}
+
+type ToastLevel = "OK" | "ERR" | null
