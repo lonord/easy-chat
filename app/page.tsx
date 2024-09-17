@@ -142,7 +142,7 @@ function Item({ msg, me, onClick }: { msg: Message, me?: boolean, onClick: () =>
           <span className="grow shrink" />
           <span>#{msg.id}</span>
         </div>
-        <div>{msg.content}</div>
+        <div className="text-wrap break-words">{msg.content}</div>
       </div>
     </div>
   )
