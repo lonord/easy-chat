@@ -3,10 +3,14 @@ import { existsSync } from "node:fs";
 
 const storeFile = process.env.STORE_FILE || 'store-data.json'
 
+const maxRecords = 100
+
 const storeData = {
     idNext: 1,
     messages: []
 }
+
+const msgListeners = []
 
 export async function initStore() {
     if (existsSync(storeFile)) {
@@ -26,12 +30,16 @@ export async function getMessages() {
     return [...storeData.messages];
 }
 
-export async function addMessage(msg) {
+export async function addMessage(msg, notify) {
     msg.id = storeData.idNext;
     storeData.messages.push(msg);
+    trimMessages();
     try {
         await save();
         storeData.idNext++;
+        if (notify) {
+            msgListeners.forEach(fn => fn(msg));
+        }
         return msg;
     } catch (e) {
         storeData.messages.splice(storeData.messages.length - 1, 1);
@@ -39,6 +47,16 @@ export async function addMessage(msg) {
     }
 }
 
+export function onMessage(fn) {
+    msgListeners.push(fn)
+}
+
 async function save() {
     await writeFile(storeFile, JSON.stringify(storeData), 'utf8');
+}
+
+function trimMessages() {
+    if (storeData.messages.length > maxRecords) {
+        storeData.messages.splice(0, storeData.messages.length - maxRecords)
+    }
 }
