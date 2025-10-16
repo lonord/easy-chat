@@ -22,6 +22,10 @@ initStore().then(() => app.prepare()).then(() => {
             handleSse(req, res, sseClients);
             return;
         }
+        if (parsedUrl.pathname === '/api/message/latest') {
+            handleLatestMessage(req, res);
+            return;
+        }
         if (parsedUrl.pathname === '/api/message') {
             req.query = parsedUrl.query
             handleApi(req, res)
@@ -66,6 +70,19 @@ async function handleApi(req, res) {
     handleError(res)(createHttpError(404, 'Not found: method ' + req.method + ' handler'))
 }
 
+async function handleLatestMessage(req, res) {
+    if (req.method !== 'GET') {
+        handleError(res)(createHttpError(405, 'method ' + req.method + ' not allowed'))
+        return
+    }
+    try {
+        const message = await getLatestMessage()
+        handleData(res)(message)
+    } catch (err) {
+        handleError(res)(err)
+    }
+}
+
 function handleError(res) {
     return (err) => {
         const status = err && err.status ? err.status : 500
@@ -85,6 +102,14 @@ async function listMessages(limit) {
         return messages.slice(messages.length - count)
     }
     return messages
+}
+
+async function getLatestMessage() {
+    const messages = await getMessages()
+    if (!messages.length) {
+        return null
+    }
+    return messages[messages.length - 1]
 }
 
 async function putMessages(client, content) {
