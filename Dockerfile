@@ -56,7 +56,6 @@ RUN mkdir .next
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/*.mjs ./
-RUN npm i socket.io@4.7.5
 
 EXPOSE 3000
 VOLUME [ "/data" ]

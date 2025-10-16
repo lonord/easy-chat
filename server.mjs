@@ -1,7 +1,6 @@
 import { createServer } from "node:http";
 import { parse } from 'node:url'
 import next from "next";
-import { Server } from "socket.io";
 import { initStore, addMessage, getMessages, onMessage } from './store.mjs';
 
 const dev = process.env.NODE_ENV !== "production";
@@ -12,63 +11,23 @@ const app = next({ dev, hostname, port });
 const handle = app.getRequestHandler();
 
 initStore().then(() => app.prepare()).then(() => {
+    const sseClients = new Set();
+
+    onMessage(msg => broadcastSseMessage(sseClients, msg));
+
     const httpServer = createServer((req, res) => {
         const parsedUrl = parse(req.url, true)
         console.log('** Path: ' + parsedUrl.pathname)
+        if (parsedUrl.pathname === '/api/message/stream') {
+            handleSse(req, res, sseClients);
+            return;
+        }
         if (parsedUrl.pathname === '/api/message') {
             req.query = parsedUrl.query
             handleApi(req, res)
             return
         }
         handle(req, res, parsedUrl)
-    });
-
-    const io = new Server(httpServer);
-
-    io.on("connection", (socket) => {
-        let client;
-        socket.on("info", (info, cb) => {
-            client = info.name;
-            cb();
-            console.log(`[io@${client}] receive client info: client = ${client}`)
-        });
-        socket.on("msg_push", async (data, cb) => {
-            if (!client) {
-                cb(null, "no client info");
-                return;
-            }
-
-            let msg = {
-                client: client,
-                createAt: new Date().getTime(),
-                content: data.content || '',
-            }
-            if (msg.content.length === 0) {
-                cb(null, "content is empty");
-                console.log(`[io@${client}] msg_push: content is empty`)
-                return;
-            }
-            if (msg.content.length > 1024 * 1024) {
-                cb(null, `content is too long, length: ${msg.content.length}`);
-                console.log(`[io@${client}] msg_push: content is too long, length = ${msg.content.length}`)
-                return;
-            }
-            try {
-                msg = await addMessage(msg);
-                socket.broadcast.emit('msg_update', msg);
-                cb(msg, null);
-                console.log(`[io@${client}] msg_push: ok, id = ${msg.id}, length = ${msg.content.length}`)
-            } catch (e) {
-                cb(null, `push message error: ${e.message || e}`);
-                console.log(`[io@${client}] msg_push: error: ${e.message || e}`)
-            }
-        });
-        socket.on("msg_sync", async (args, cb) => {
-            const ms = await getMessages();
-            cb(ms);
-            console.log(`[io@${client || "<UNKNOW>"}] msg_sync: ${ms.length} messages total`)
-        });
-        onMessage(msg => socket.broadcast.emit('msg_update', msg))
     });
 
     httpServer
@@ -84,24 +43,39 @@ initStore().then(() => app.prepare()).then(() => {
     process.exit(1);
 })
 
-function handleApi(req, res) {
+async function handleApi(req, res) {
     if (req.method === 'GET') {
-        listMessages(req.query.limit).then(handleData(res)).catch(handleError(res))
+        try {
+            const messages = await listMessages(req.query.limit)
+            handleData(res)(messages)
+        } catch (err) {
+            handleError(res)(err)
+        }
         return
     }
     if (req.method === 'POST') {
-        putMessages(req.body.client, req.body.content).then(() => handleData(res)('ok')).catch(handleError(res))
+        try {
+            const body = await readJsonBody(req)
+            const message = await putMessages(body.client, body.content)
+            handleData(res)(message)
+        } catch (err) {
+            handleError(res)(err)
+        }
         return
     }
     handleError(res)(createHttpError(404, 'Not found: method ' + req.method + ' handler'))
 }
 
 function handleError(res) {
-    return (err) => res.status(err.status || 500).json({ error: err.message || err })
+    return (err) => {
+        const status = err && err.status ? err.status : 500
+        const message = err && err.message ? err.message : err
+        sendJson(res, status, { error: message })
+    }
 }
 
 function handleData(res) {
-    return (data) => res.status(200).json({ data })
+    return (data) => sendJson(res, 200, { data })
 }
 
 async function listMessages(limit) {
@@ -117,19 +91,107 @@ async function putMessages(client, content) {
     if (!client) {
         throw createHttpError(400, 'param `client` is required')
     }
-    if (!content) {
+    if (typeof content !== 'string' || content.length === 0) {
         throw createHttpError(400, 'param `content` is required')
+    }
+    if (content.length > 1024 * 1024) {
+        throw createHttpError(400, `content is too long, length: ${content.length}`)
     }
     let msg = {
         client: client,
         createAt: new Date().getTime(),
         content: content || '',
     }
-    await addMessage(msg, true)
+    return await addMessage(msg, true)
 }
 
 function createHttpError(status, msg) {
     const err = new Error(msg)
     err.status = status
     return err
+}
+
+function sendJson(res, status, payload) {
+    const body = JSON.stringify(payload)
+    res.writeHead(status, {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache',
+        'Content-Length': Buffer.byteLength(body),
+    })
+    res.end(body)
+}
+
+function broadcastSseMessage(clients, msg) {
+    const payload = `data: ${JSON.stringify(msg)}\n\n`
+    clients.forEach((client) => {
+        try {
+            client.write(payload)
+        } catch (err) {
+            console.error('[sse] broadcast error:', err)
+            clients.delete(client)
+            try {
+                client.end()
+            } catch { }
+        }
+    })
+}
+
+function handleSse(req, res, clients) {
+    res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+    })
+
+    res.write('\n')
+
+    const heartbeat = setInterval(() => {
+        try {
+            res.write(': heartbeat\n\n')
+        } catch {
+            clearInterval(heartbeat)
+        }
+    }, 30000)
+
+    const client = {
+        write: (data) => res.write(data),
+        end: () => res.end(),
+    }
+
+    clients.add(client)
+
+    req.on('close', () => {
+        clearInterval(heartbeat)
+        clients.delete(client)
+        try {
+            res.end()
+        } catch { }
+    })
+}
+
+function readJsonBody(req) {
+    return new Promise((resolve, reject) => {
+        let data = ''
+        req.on('data', (chunk) => {
+            data += chunk
+            if (data.length > 1024 * 1024) {
+                reject(createHttpError(413, 'request body too large'))
+                req.destroy()
+            }
+        })
+        req.on('end', () => {
+            if (!data) {
+                resolve({})
+                return
+            }
+            try {
+                resolve(JSON.parse(data))
+            } catch (err) {
+                reject(createHttpError(400, 'invalid JSON body'))
+            }
+        })
+        req.on('error', (err) => {
+            reject(createHttpError(400, err.message || err))
+        })
+    })
 }
