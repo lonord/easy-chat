@@ -204,32 +204,40 @@ export default function Home() {
             key={msg.id}
             msg={msg}
             me={msg.client === clientName}
-            onClick={() => onCopy(msg.content)}
+            onCopy={() => onCopy(msg.content)}
           />
         ))}
       </div>
-      <div className="w-full p-2 flex flex-col items-center outline outline-gray-200 outline-1 rounded">
+      <div className="w-full p-3 flex flex-col items-center outline outline-gray-200 outline-1 rounded">
         <Textarea
-          className="w-full h-24 resize-none outline-none px-2"
+          className="w-full h-24 resize-none outline-none pb-2"
           disabled={sending}
           placeholder="Input content..."
           value={inputText}
           onChange={(event) => setInputText(event.target.value)}
         />
         <div className="w-full pt-2 flex">
-          <div className="w-1/5">
+          <div className="w-1/5 flex items-center">
             <div className="text-gray-400">Text: {inputText.length}</div>
           </div>
           <div className="grow shrink flex justify-center items-center">
             <Toast text={toastText} level={toastLevel} onDismiss={onToastDismiss} />
           </div>
-          <div className="w-1/5 flex justify-end">
+          <div className="flex justify-end">
             <Button
               disabled={!isConnected || sending}
-              className="rounded bg-sky-600 py-2 px-4 text-sm text-white data-[hover]:bg-sky-500 data-[active]:bg-sky-700 ml-4"
+              aria-label="Send message"
+              className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-sky-600 text-white transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400 data-[hover]:bg-sky-500 data-[active]:bg-sky-700"
               onClick={() => sendMsg(inputText)}
             >
-              Send
+              <svg
+                className="h-5 w-5"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+                aria-hidden="true"
+              >
+                <path d="M3.105 11.553a1.125 1.125 0 0 1 0-2.106l16.5-6.75a1.125 1.125 0 0 1 1.53 1.53l-6.75 16.5a1.125 1.125 0 0 1-2.106 0l-1.708-4.272a.563.563 0 0 0-.314-.314l-4.272-1.708Z" />
+              </svg>
             </Button>
           </div>
         </div>
@@ -238,18 +246,36 @@ export default function Home() {
   );
 }
 
-function Item({ msg, me, onClick }: { msg: Message; me?: boolean; onClick: () => void }) {
+function Item({ msg, me, onCopy }: { msg: Message; me?: boolean; onCopy: () => void }) {
   return (
     <div className={`w-full ${me ? "pl-4 md:pl-8 lg:pl-16" : "pr-4 md:pr-8 lg:pr-16"}`}>
       <div
-        className={`flex flex-col w-full px-3 py-2 cursor-pointer rounded ${
-          me ? "bg-sky-100" : "bg-gray-100"
-        }`}
-        onClick={onClick}
+        className={`flex flex-col w-full px-3 py-2 rounded ${me ? "bg-sky-100" : "bg-gray-100"
+          }`}
       >
-        <div className="flex text-gray-400">
+        <div className="flex items-center gap-2 text-gray-400">
           <span>{msg.client}</span>
           <span className="grow shrink" />
+          <Button
+            type="button"
+            aria-label="Copy message"
+            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-gray-400 transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400 data-[hover]:text-gray-600 data-[active]:text-gray-700 data-[hover]:bg-white/40 data-[active]:bg-white/70"
+            onClick={onCopy}
+          >
+            <svg
+              className="h-4 w-4"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <rect x="9" y="9" width="12" height="12" rx="2" />
+              <path d="M6 15H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1" />
+            </svg>
+          </Button>
           <span>#{msg.id}</span>
         </div>
         <div className="text-wrap break-words">{msg.content}</div>
