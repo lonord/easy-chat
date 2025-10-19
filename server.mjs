@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { parse } from "node:url";
 import { basename } from "node:path";
+import { readFileSync } from "node:fs";
 import next from "next";
 import Busboy from "busboy";
 import {
@@ -37,7 +38,7 @@ const MAX_ATTACHMENT_SIZE =
     : DEFAULT_ATTACHMENT_LIMIT;
 
 if (!dev) {
-  const { config } = require('./.next/required-server-files.json')
+  const { config } = JSON.parse(readFileSync('./.next/required-server-files.json', 'utf8'))
   process.env.__NEXT_PRIVATE_STANDALONE_CONFIG = JSON.stringify(config)
 }
 
