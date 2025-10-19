@@ -4,18 +4,20 @@
 - Persistence: JSON file store (`store-data.json`) with up to 100 retained messages, location configurable through the `STORE_FILE` env variable.
 
 **Runtime Flow**
-- `server.mjs` bootstraps Next, initializes the store, and mounts an HTTP server that proxies to Next while handling three custom endpoints:
+- `server.mjs` bootstraps Next, initializes the store, and mounts an HTTP server that proxies to Next while handling custom endpoints:
   - `GET /api/message`: returns all messages or the newest `limit` items.
-  - `POST /api/message`: validates `client` & `content`, persists the entry, and broadcasts it.
+  - `POST /api/message`: accepts JSON or multipart form data, validates `client`, and stores text or attachment metadata before broadcasting.
   - `GET /api/message/latest`: fetches the most recent message (or `null`).
   - `GET /api/message/stream`: Server-Sent Events channel; all connected clients receive new messages and heartbeats every 30s.
-- Store helpers (`store.mjs`) provide `initStore`, `getMessages`, `addMessage`, and `onMessage`. Messages receive incremental IDs and are trimmed to the `maxRecords` cap (100).
+  - `GET /api/attachment/:id`: streams stored blobs with appropriate headers for inline image preview or downloads.
+- Store helpers (`store.mjs`) provide `initStore`, `getMessages`, `addMessage`, `onMessage`, and `onTrim`. Messages receive incremental IDs, retain attachment metadata (`attachmentId`, `mimeType`, `size`), and are trimmed to the `maxRecords` cap (100) with orphaned blobs cleaned up.
+- `blob-store.mjs` encapsulates attachment persistence, ensuring the blob directory exists, streaming uploads to disk, and exposing read/delete utilities for the server.
 
 **Front-End**
 - `app/page.tsx`: client component that
   - prompts for a device name via `useClient` (`app/client.js`, uses `localStorage`).
   - fetches the initial message list and listens to `/api/message/stream` for real-time updates.
-  - allows composing/sending messages, highlights the current client's entries, and supports click-to-copy with toast feedback.
+  - allows composing/sending text messages, uploading/pasting attachments (images render inline; other files show download controls), highlights the current client's entries, and supports click-to-copy for text messages.
 - `app/reset/page.tsx`: utility page to clear the cached client name and reload.
 - Styling leverages Tailwind via `app/globals.css`; Headless UI provides accessible buttons/textarea.
 
@@ -34,5 +36,7 @@
 - Environment variables:
   - `SERVER_HOST`, `SERVER_PORT`: control the listening address.
   - `STORE_FILE`: persistence path (defaults to `store-data.json`; Docker image points it to `/data/store-data.json`).
+  - `STORE_BLOBS_DIR`: directory for attachment payloads (`store-blobs` by default).
+  - `MAX_ATTACHMENT_SIZE`: optional override for the maximum attachment size (defaults to 10 MiB).
   - `NEXT_TELEMETRY_DISABLED`, `TZ`: set in the Docker runtime stage.
-- Add additional message retention or storage backends by replacing `store.mjs`.
+- Add additional message retention or storage backends by replacing `store.mjs`; customize attachment handling by extending `blob-store.mjs`.
