@@ -36,6 +36,11 @@ const MAX_ATTACHMENT_SIZE =
     ? parsedAttachmentLimit
     : DEFAULT_ATTACHMENT_LIMIT;
 
+if (!dev) {
+  const { config } = require('./.next/required-server-files.json')
+  process.env.__NEXT_PRIVATE_STANDALONE_CONFIG = JSON.stringify(config)
+}
+
 onTrim(handleTrimmedMessages);
 onDelete(handleDeletedMessage);
 
