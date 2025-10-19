@@ -37,7 +37,7 @@ export default function Home() {
     setToastLevel("ERR");
   }, []);
 
-  const appendMessage = useCallback((msg: Message) => {
+  const addIncomingMessage = useCallback((msg: Message) => {
     if (!msg) {
       return;
     }
@@ -48,6 +48,36 @@ export default function Home() {
       return orderBy([...prev, msg], ["createAt"], ["asc"]);
     });
   }, []);
+
+  const removeMessageById = useCallback((messageId: number) => {
+    if (typeof messageId !== "number" || !Number.isFinite(messageId)) {
+      return;
+    }
+    setMessages((prev) => prev.filter((item) => item.id !== messageId));
+  }, []);
+
+  const applyMessagePayload = useCallback(
+    (payload: Message | MessageStreamPayload | null) => {
+      if (!payload) {
+        return;
+      }
+      if (isMessageStreamPayload(payload)) {
+        switch (payload.event) {
+          case "message-created":
+            addIncomingMessage(payload.message);
+            break;
+          case "message-deleted":
+            removeMessageById(payload.id);
+            break;
+          default:
+            break;
+        }
+        return;
+      }
+      addIncomingMessage(payload);
+    },
+    [addIncomingMessage, removeMessageById]
+  );
 
   const scrollToBottom = useCallback(() => {
     if (scrollDivRef.current) {
@@ -166,6 +196,44 @@ export default function Home() {
     [clientName, sending, toastERR, toastOK]
   );
 
+  const handleDeleteMessage = useCallback(
+    async (msg: Message) => {
+      const idValue = typeof msg.id === "number" ? msg.id : Number(msg.id);
+      if (!Number.isFinite(idValue)) {
+        toastERR("Invalid message id");
+        return;
+      }
+      const confirmed = window.confirm("Delete this message?");
+      if (!confirmed) {
+        return;
+      }
+      try {
+        const response = await fetch(`/api/message/${idValue}`, {
+          method: "DELETE",
+        });
+        let payload: any = null;
+        try {
+          payload = await response.json();
+        } catch {
+          payload = null;
+        }
+        if (!response.ok) {
+          const message =
+            payload && payload.error
+              ? payload.error
+              : `Request failed with status ${response.status}`;
+          throw new Error(message);
+        }
+        removeMessageById(idValue);
+        toastOK("Deleted");
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        toastERR(message);
+      }
+    },
+    [removeMessageById, toastERR, toastOK]
+  );
+
   const handleFileInputChange = useCallback(
     (event: ChangeEvent<HTMLInputElement>) => {
       void uploadFiles(event.target.files);
@@ -252,9 +320,9 @@ export default function Home() {
         return;
       }
       try {
-        const msg = JSON.parse(event.data);
+        const payload = JSON.parse(event.data);
         if (isMounted) {
-          appendMessage(msg);
+          applyMessagePayload(payload);
         }
       } catch (err) {
         console.error("[sse] invalid payload", err);
@@ -277,7 +345,7 @@ export default function Home() {
       es.close();
       eventSourceRef.current = null;
     };
-  }, [clientName, appendMessage, toastERR]);
+  }, [clientName, applyMessagePayload, toastERR]);
 
   return (
     <main className="flex flex-col items-center justify-between p-4 max-w-screen-lg mx-auto h-full">
@@ -291,6 +359,7 @@ export default function Home() {
             msg={msg}
             me={msg.client === clientName}
             onCopy={() => onCopy(msg.content)}
+            onDelete={() => handleDeleteMessage(msg)}
           />
         ))}
       </div>
@@ -360,7 +429,17 @@ export default function Home() {
   );
 }
 
-function Item({ msg, me, onCopy }: { msg: Message; me?: boolean; onCopy: () => void }) {
+function Item({
+  msg,
+  me,
+  onCopy,
+  onDelete,
+}: {
+  msg: Message;
+  me?: boolean;
+  onCopy?: () => void;
+  onDelete?: () => void;
+}) {
   const hasAttachment = Boolean(msg.attachmentId);
   const mimeType = typeof msg.mimeType === "string" ? msg.mimeType : "";
   const isImage = hasAttachment && mimeType.startsWith("image/");
@@ -385,7 +464,7 @@ function Item({ msg, me, onCopy }: { msg: Message; me?: boolean; onCopy: () => v
         <div className="flex items-center gap-2 text-gray-400">
           <span>{msg.client}</span>
           <span className="grow shrink" />
-          {!hasAttachment ? (
+          {!hasAttachment && onCopy ? (
             <Button
               type="button"
               aria-label="Copy message"
@@ -404,6 +483,31 @@ function Item({ msg, me, onCopy }: { msg: Message; me?: boolean; onCopy: () => v
               >
                 <rect x="9" y="9" width="12" height="12" rx="2" />
                 <path d="M6 15H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1" />
+              </svg>
+            </Button>
+          ) : null}
+          {onDelete ? (
+            <Button
+              type="button"
+              aria-label="Delete message"
+              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-red-400 transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-500 data-[hover]:text-red-600 data-[active]:text-red-700 data-[hover]:bg-white/40 data-[active]:bg-white/70"
+              onClick={onDelete}
+            >
+              <svg
+                className="h-4 w-4"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M6 7h12" />
+                <path d="M10 11v6" />
+                <path d="M14 11v6" />
+                <path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+                <path d="M7 7h10l-1 12a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2L7 7Z" />
               </svg>
             </Button>
           ) : null}
@@ -471,6 +575,24 @@ type Message = {
   mimeType?: string;
   size?: number;
 };
+
+type MessageStreamPayload =
+  | { event: "message-created"; message: Message }
+  | { event: "message-deleted"; id: number };
+
+function isMessageStreamPayload(value: unknown): value is MessageStreamPayload {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const event = (value as { event?: unknown }).event;
+  if (event === "message-created") {
+    return typeof (value as any).message === "object" && (value as any).message !== null;
+  }
+  if (event === "message-deleted") {
+    return typeof (value as any).id === "number";
+  }
+  return false;
+}
 
 function formatBytes(size?: number): string | null {
   if (typeof size !== "number" || !Number.isFinite(size) || size < 0) {

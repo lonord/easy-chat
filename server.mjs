@@ -3,7 +3,15 @@ import { parse } from "node:url";
 import { basename } from "node:path";
 import next from "next";
 import Busboy from "busboy";
-import { initStore, addMessage, getMessages, onMessage, onTrim } from "./store.mjs";
+import {
+  initStore,
+  addMessage,
+  getMessages,
+  deleteMessage,
+  onMessage,
+  onTrim,
+  onDelete,
+} from "./store.mjs";
 import {
   initBlobStore,
   saveBlob,
@@ -18,6 +26,7 @@ const hostname = process.env.SERVER_HOST || "localhost";
 const port = parseInt(process.env.SERVER_PORT || "3000", 10);
 const app = next({ dev, hostname, port });
 const handle = app.getRequestHandler();
+const sseClients = new Set();
 
 const MAX_TEXT_LENGTH = 1024 * 1024;
 const DEFAULT_ATTACHMENT_LIMIT = 10 * 1024 * 1024;
@@ -28,13 +37,20 @@ const MAX_ATTACHMENT_SIZE =
     : DEFAULT_ATTACHMENT_LIMIT;
 
 onTrim(handleTrimmedMessages);
+onDelete(handleDeletedMessage);
 
 Promise.all([initStore(), initBlobStore()])
   .then(() => app.prepare())
   .then(() => {
-    const sseClients = new Set();
-
-    onMessage((msg) => broadcastSseMessage(sseClients, msg));
+    onMessage((msg) => broadcastSseMessageCreated(sseClients, msg));
+    onTrim((messages) => {
+      messages
+        .filter((message) => message && typeof message.id === "number")
+        .forEach((message) => {
+          broadcastSseMessageDeleted(sseClients, message);
+        });
+    });
+    onDelete((msg) => broadcastSseMessageDeleted(sseClients, msg));
 
     const httpServer = createServer((req, res) => {
       const parsedUrl = parse(req.url || "", true);
@@ -47,6 +63,11 @@ Promise.all([initStore(), initBlobStore()])
       }
       if (pathname === "/api/message/latest") {
         handleLatestMessage(req, res);
+        return;
+      }
+      if (pathname.startsWith("/api/message/")) {
+        const idSegment = decodeURIComponent(pathname.replace("/api/message/", ""));
+        handleMessageItem(req, res, idSegment);
         return;
       }
       if (pathname === "/api/message") {
@@ -106,6 +127,21 @@ async function handleApi(req, res) {
     return;
   }
 
+  if (req.method === "DELETE") {
+    const messageId = parseMessageId(req.query?.id);
+    if (!messageId) {
+      handleError(res)(createHttpError(400, "param `id` is required"));
+      return;
+    }
+    try {
+      const deleted = await performDeleteMessage(messageId);
+      handleData(res)({ id: deleted.id });
+    } catch (err) {
+      handleError(res)(err);
+    }
+    return;
+  }
+
   handleError(res)(createHttpError(404, "Not found: method " + req.method + " handler"));
 }
 
@@ -120,6 +156,26 @@ async function handleLatestMessage(req, res) {
   } catch (err) {
     handleError(res)(err);
   }
+}
+
+async function handleMessageItem(req, res, idSegment) {
+  const messageId = parseMessageId(idSegment);
+  if (!messageId) {
+    handleError(res)(createHttpError(400, "invalid message id"));
+    return;
+  }
+
+  if (req.method === "DELETE") {
+    try {
+      const deleted = await performDeleteMessage(messageId);
+      handleData(res)({ id: deleted.id });
+    } catch (err) {
+      handleError(res)(err);
+    }
+    return;
+  }
+
+  handleError(res)(createHttpError(405, "method " + req.method + " not allowed"));
 }
 
 async function handleAttachmentRequest(req, res, attachmentId, query) {
@@ -194,6 +250,14 @@ async function getLatestMessage() {
   return messages[messages.length - 1];
 }
 
+async function performDeleteMessage(messageId) {
+  const deleted = await deleteMessage(messageId, true);
+  if (!deleted) {
+    throw createHttpError(404, `message ${messageId} not found`);
+  }
+  return deleted;
+}
+
 async function putMessages(client, content, attachment) {
   if (!client) {
     await cleanupAttachment(attachment);
@@ -254,11 +318,14 @@ function sendJson(res, status, payload) {
   res.end(body);
 }
 
-function broadcastSseMessage(clients, msg) {
-  const payload = `data: ${JSON.stringify(msg)}\n\n`;
+function broadcastSsePayload(clients, payload) {
+  if (!payload) {
+    return;
+  }
+  const data = `data: ${JSON.stringify(payload)}\n\n`;
   clients.forEach((client) => {
     try {
-      client.write(payload);
+      client.write(data);
     } catch (err) {
       console.error("[sse] broadcast error:", err);
       clients.delete(client);
@@ -269,6 +336,20 @@ function broadcastSseMessage(clients, msg) {
       }
     }
   });
+}
+
+function broadcastSseMessageCreated(clients, message) {
+  if (!message) {
+    return;
+  }
+  broadcastSsePayload(clients, { event: "message-created", message });
+}
+
+function broadcastSseMessageDeleted(clients, message) {
+  if (!message || typeof message.id !== "number") {
+    return;
+  }
+  broadcastSsePayload(clients, { event: "message-deleted", id: message.id });
 }
 
 function handleSse(req, res, clients) {
@@ -343,6 +424,10 @@ function handleTrimmedMessages(messages) {
     });
 }
 
+function handleDeletedMessage(message) {
+  cleanupAttachment(message);
+}
+
 async function findMessageByAttachment(attachmentId) {
   const messages = await getMessages();
   return messages.find((msg) => msg && msg.attachmentId === attachmentId) || null;
@@ -385,6 +470,28 @@ function buildContentDisposition(filename, inline) {
 function sanitizeFilename(filename) {
   const base = basename(filename);
   return base.replace(/[/\\?%*:|"<>]/g, "_") || "download";
+}
+
+function parseMessageId(input) {
+  let value = input;
+  if (Array.isArray(value)) {
+    value = value[0];
+  }
+  if (typeof value === "number") {
+    return Number.isInteger(value) && value > 0 ? value : null;
+  }
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const id = Number.parseInt(trimmed, 10);
+  if (!Number.isFinite(id) || id <= 0) {
+    return null;
+  }
+  return id;
 }
 
 async function resolveAttachmentSize(attachmentId) {

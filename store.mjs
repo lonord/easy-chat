@@ -12,6 +12,7 @@ const storeData = {
 
 const msgListeners = []
 const trimListeners = []
+const deleteListeners = []
 
 export async function initStore() {
     if (existsSync(storeFile)) {
@@ -62,12 +63,34 @@ export async function addMessage(msg, notify) {
     }
 }
 
+export async function deleteMessage(id, notify = false) {
+    const idx = storeData.messages.findIndex(msg => msg && msg.id === id);
+    if (idx === -1) {
+        return null;
+    }
+    const [removed] = storeData.messages.splice(idx, 1);
+    try {
+        await save();
+        if (notify) {
+            notifyDelete(removed);
+        }
+        return removed;
+    } catch (e) {
+        storeData.messages.splice(idx, 0, removed);
+        throw e;
+    }
+}
+
 export function onMessage(fn) {
     msgListeners.push(fn)
 }
 
 export function onTrim(fn) {
     trimListeners.push(fn);
+}
+
+export function onDelete(fn) {
+    deleteListeners.push(fn);
 }
 
 async function save() {
@@ -87,6 +110,16 @@ function notifyTrim(removed) {
             fn(removed);
         } catch (err) {
             console.error('[store] trim listener error:', err);
+        }
+    });
+}
+
+function notifyDelete(msg) {
+    deleteListeners.forEach(fn => {
+        try {
+            fn(msg);
+        } catch (err) {
+            console.error('[store] delete listener error:', err);
         }
     });
 }

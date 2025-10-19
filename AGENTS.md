@@ -5,12 +5,14 @@
 
 **Runtime Flow**
 - `server.mjs` bootstraps Next, initializes the store, and mounts an HTTP server that proxies to Next while handling custom endpoints:
-  - `GET /api/message`: returns all messages or the newest `limit` items.
-  - `POST /api/message`: accepts JSON or multipart form data, validates `client`, and stores text or attachment metadata before broadcasting.
-  - `GET /api/message/latest`: fetches the most recent message (or `null`).
-  - `GET /api/message/stream`: Server-Sent Events channel; all connected clients receive new messages and heartbeats every 30s.
-  - `GET /api/attachment/:id`: streams stored blobs with appropriate headers for inline image preview or downloads.
-- Store helpers (`store.mjs`) provide `initStore`, `getMessages`, `addMessage`, `onMessage`, and `onTrim`. Messages receive incremental IDs, retain attachment metadata (`attachmentId`, `mimeType`, `size`), and are trimmed to the `maxRecords` cap (100) with orphaned blobs cleaned up.
+- `GET /api/message`: returns all messages or the newest `limit` items.
+- `POST /api/message`: accepts JSON or multipart form data, validates `client`, and stores text or attachment metadata before broadcasting.
+- `DELETE /api/message/:id`: removes an existing message, cleaning up attachment blobs and notifying connected clients.
+- `GET /api/message/latest`: fetches the most recent message (or `null`).
+- `GET /api/message/stream`: Server-Sent Events channel; all connected clients receive new messages and heartbeats every 30s.
+- `GET /api/attachment/:id`: streams stored blobs with appropriate headers for inline image preview or downloads.
+- Server-Sent Events now emit structured payloads with `event` keys (e.g. `"message-created"`, `"message-deleted"`) to allow clients to sync additions and removals.
+- Store helpers (`store.mjs`) provide `initStore`, `getMessages`, `addMessage`, `deleteMessage`, `onMessage`, `onDelete`, and `onTrim`. Messages receive incremental IDs, retain attachment metadata (`attachmentId`, `mimeType`, `size`), and are trimmed to the `maxRecords` cap (100) with orphaned blobs cleaned up; deleted messages trigger blob cleanup and downstream notifications.
 - `blob-store.mjs` encapsulates attachment persistence, ensuring the blob directory exists, streaming uploads to disk, and exposing read/delete utilities for the server.
 
 **Front-End**
@@ -18,6 +20,7 @@
   - prompts for a device name via `useClient` (`app/client.js`, uses `localStorage`).
   - fetches the initial message list and listens to `/api/message/stream` for real-time updates.
   - allows composing/sending text messages, uploading/pasting attachments (images render inline; other files show download controls), highlights the current client's entries, and supports click-to-copy for text messages.
+  - renders per-message copy and delete actions, with delete operations gated behind a confirmation prompt.
 - `app/reset/page.tsx`: utility page to clear the cached client name and reload.
 - Styling leverages Tailwind via `app/globals.css`; Headless UI provides accessible buttons/textarea.
 
