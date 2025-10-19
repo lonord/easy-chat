@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM node:18-alpine AS base
+FROM --platform=$BUILDPLATFORM node:22-alpine AS base
 
 ARG TARGETPLATFORM
 ARG BUILDPLATFORM
@@ -38,7 +38,7 @@ RUN \
     fi
 
 # Production image, copy all the files and run next
-FROM node:18-alpine AS runner
+FROM node:22-alpine AS runner
 WORKDIR /app
 
 ENV TZ=Asia/Shanghai
@@ -61,6 +61,7 @@ EXPOSE 3000
 VOLUME [ "/data" ]
 
 ENV STORE_FILE=/data/store-data.json
+ENV STORE_BLOBS_DIR=/data/store-blobs
 ENV SERVER_HOST=0.0.0.0
 ENV SERVER_PORT=3000
 
