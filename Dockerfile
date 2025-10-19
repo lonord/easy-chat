@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM node:22-alpine AS base
+FROM --platform=$BUILDPLATFORM node:18-alpine AS base
 
 ARG TARGETPLATFORM
 ARG BUILDPLATFORM
@@ -38,7 +38,7 @@ RUN \
     fi
 
 # Production image, copy all the files and run next
-FROM node:22-alpine AS runner
+FROM node:18-alpine AS runner
 WORKDIR /app
 
 ENV TZ=Asia/Shanghai
@@ -55,7 +55,9 @@ RUN mkdir .next
 # https://nextjs.org/docs/advanced-features/output-file-tracing
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
-COPY --from=builder /app/*.mjs ./
+COPY --from=builder /app/server.mjs ./
+COPY --from=builder /app/store.mjs ./
+COPY --from=builder /app/blob-store.mjs ./
 
 EXPOSE 3000
 VOLUME [ "/data" ]
