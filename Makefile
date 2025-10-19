@@ -1,5 +1,5 @@
 APP_NAME := easy-chat
-APP_VERSION := 1.1
+APP_VERSION := 2.0
 BUILD_TIME := $(shell date "+%F %T %Z")
 
 REGISTRY = lonord
