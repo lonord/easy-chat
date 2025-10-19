@@ -2,13 +2,12 @@ name: Build & Push Docker image
 
 on:
   push:
-    branches: [ main ]   # main 分支推送
-    tags: [ 'v*' ]       # 形如 v1.2、v2.0.1 的 tag
-  workflow_dispatch:      # 手动触发
+    branches: [ main ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
 
 env:
-  # 改成你的 Docker Hub 仓库名（形如 用户名/仓库名）
-  DOCKERHUB_REPO: yourname/yourrepo
+  DOCKERHUB_REPO: lonord/easy-chat
 
 jobs:
   docker:
@@ -22,13 +21,11 @@ jobs:
         shell: bash
         run: |
           if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
-            # tag 推送：构建该 tag，对镜像打去掉前缀 v 的版本号
             raw_tag="${GITHUB_REF#refs/tags/}"   # v1.2
             version="${raw_tag#v}"               # 1.2
             echo "build_ref=${GITHUB_REF}" >> $GITHUB_OUTPUT
             echo "image_tag=${version}" >> $GITHUB_OUTPUT
           else
-            # main 推送 或 手动触发：构建 main，镜像打 latest
             echo "build_ref=refs/heads/main" >> $GITHUB_OUTPUT
             echo "image_tag=latest" >> $GITHUB_OUTPUT
           fi
